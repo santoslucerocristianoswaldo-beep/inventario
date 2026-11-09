@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inventario</title>
+<script src="https://unpkg.com/html5-qrcode"></script>
+</head>
+<body>
+<h2>Inventario de la casa</h2>
+<label><input type="radio" name="modo" value="1" checked> Entrada (+1)</label>
+<label><input type="radio" name="modo" value="-1"> Salida (-1)</label>
+<div id="lector" style="width:300px"></div>
+<ul id="lista"></ul>
+
+<script>
+let inv = JSON.parse(localStorage.getItem("inv") || "{}");
+
+function guardar() {
+  localStorage.setItem("inv", JSON.stringify(inv));
+  const ul = document.getElementById("lista");
+  ul.innerHTML = "";
+  for (const [codigo, p] of Object.entries(inv)) {
+    ul.innerHTML += `<li>${p.nombre}: <b>${p.cantidad}</b></li>`;
+  }
+}
+
+async function nombreProducto(codigo) {
+  try {
+    const r = await fetch(`https://world.openfoodfacts.org/api/v0/product/${codigo}.json`);
+    const d = await r.json();
+    if (d.status === 1) return d.product.product_name;
+  } catch (e) {}
+  return prompt("Producto nuevo, ¿cómo se llama?") || codigo;
+}
+
+function avisar(texto) {
+  alert(texto);
+  // Opcional (gratis): llega como notificación push al teléfono con la app ntfy
+  fetch("https://ntfy.sh/mi-casa-inventario-cris123", { method: "POST", body: texto });
+}
+
+async function alEscanear(codigo) {
+  const delta = parseInt(document.querySelector('input[name="modo"]:checked').value);
+  if (!inv[codigo]) {
+    if (delta < 0) return alert("Ese producto no está en el inventario");
+    inv[codigo] = { nombre: await nombreProducto(codigo), cantidad: 0 };
+  }
+  inv[codigo].cantidad += delta;
+  if (inv[codigo].cantidad <= 0) {
+    inv[codigo].cantidad = 0;
+    avisar(`Se acabó: ${inv[codigo].nombre}`);
+  }
+  guardar();
+}
+
+let ultimo = "", t = 0;
+new Html5QrcodeScanner("lector", { fps: 10, qrbox: 250 })
+  .render(codigo => {
+    // evita leer el mismo código varias veces seguidas
+    if (codigo === ultimo && Date.now() - t < 3000) return;
+    ultimo = codigo; t = Date.now();
+    alEscanear(codigo);
+  });
+
+guardar();
+</script>
+</body>
+</html>
