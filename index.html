@@ -4,64 +4,138 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Inventario</title>
-<script src="https://unpkg.com/html5-qrcode"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8"></script>
+<style>
+  body { font-family: sans-serif; margin: 12px; }
+  #estado { padding: 8px; background: #e8f0fe; margin: 8px 0; border-radius: 6px; }
+  li { margin: 8px 0; }
+  button { padding: 6px 10px; margin: 0 2px; }
+  input[type=text] { padding: 6px; }
+</style>
 </head>
 <body>
 <h2>Inventario de la casa</h2>
+
 <label><input type="radio" name="modo" value="1" checked> Entrada (+1)</label>
 <label><input type="radio" name="modo" value="-1"> Salida (-1)</label>
-<div id="lector" style="width:300px"></div>
+
+<div id="estado">Listo. Escanea un código.</div>
+<div id="lector" style="width:100%;max-width:400px"></div>
+
+<h3>Agregar a mano</h3>
+<input type="text" id="manual" placeholder="Nombre del producto">
+<button onclick="agregarManual()">Agregar</button>
+
+<h3>Productos</h3>
 <ul id="lista"></ul>
 
 <script>
-let inv = JSON.parse(localStorage.getItem("inv") || "{}");
+let inv = {};
+try { inv = JSON.parse(localStorage.getItem("inv") || "{}"); } catch (e) {}
+
+function estado(t) { document.getElementById("estado").textContent = t; }
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+}
 
 function guardar() {
-  localStorage.setItem("inv", JSON.stringify(inv));
+  try { localStorage.setItem("inv", JSON.stringify(inv)); }
+  catch (e) { estado("No se pudo guardar en el teléfono"); }
   const ul = document.getElementById("lista");
   ul.innerHTML = "";
-  for (const [codigo, p] of Object.entries(inv)) {
-    ul.innerHTML += `<li>${p.nombre}: <b>${p.cantidad}</b></li>`;
+  for (const [c, p] of Object.entries(inv)) {
+    const li = document.createElement("li");
+    li.innerHTML = `${esc(p.nombre)}: <b>${p.cantidad}</b> ` +
+      `<button onclick="cambiar('${c}',1)">+</button>` +
+      `<button onclick="cambiar('${c}',-1)">-</button>` +
+      `<button onclick="renombrar('${c}')">✏️</button>` +
+      `<button onclick="borrar('${c}')">🗑️</button>`;
+    ul.appendChild(li);
   }
 }
 
-async function nombreProducto(codigo) {
+async function buscarNombre(codigo) {
   try {
-    const r = await fetch(`https://world.openfoodfacts.org/api/v0/product/${codigo}.json`);
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 4000);
+    const r = await fetch(`https://world.openfoodfacts.org/api/v0/product/${codigo}.json`, { signal: ctl.signal });
+    clearTimeout(t);
     const d = await r.json();
-    if (d.status === 1) return d.product.product_name;
+    if (d.status === 1 && d.product.product_name) return d.product.product_name;
   } catch (e) {}
-  return prompt("Producto nuevo, ¿cómo se llama?") || codigo;
+  return "Producto " + codigo;
 }
 
 function avisar(texto) {
+  estado(texto);
   alert(texto);
-  // Opcional (gratis): llega como notificación push al teléfono con la app ntfy
-  fetch("https://ntfy.sh/mi-casa-inventario-cris123", { method: "POST", body: texto });
+  // Mensaje push gratis con la app ntfy (cambia el nombre del tema por uno tuyo)
+  fetch("https://ntfy.sh/mi-casa-inventario-cris123", { method: "POST", body: texto }).catch(() => {});
+}
+
+function cambiar(c, d) {
+  const p = inv[c];
+  if (!p) return;
+  p.cantidad = Math.max(0, p.cantidad + d);
+  guardar();
+  estado(`${p.nombre}: ${p.cantidad}`);
+  if (p.cantidad === 0 && d < 0) avisar(`Se acabó: ${p.nombre}`);
+}
+
+function renombrar(c) {
+  const n = prompt("Nuevo nombre:", inv[c].nombre);
+  if (n) { inv[c].nombre = n; guardar(); }
+}
+
+function borrar(c) {
+  if (confirm("¿Borrar " + inv[c].nombre + "?")) { delete inv[c]; guardar(); }
+}
+
+function agregarManual() {
+  const input = document.getElementById("manual");
+  const nombre = input.value.trim();
+  if (!nombre) return;
+  inv["manual-" + Date.now()] = { nombre: nombre, cantidad: 1 };
+  input.value = "";
+  guardar();
+  estado("Agregado: " + nombre);
 }
 
 async function alEscanear(codigo) {
+  estado("Código leído: " + codigo);
   const delta = parseInt(document.querySelector('input[name="modo"]:checked').value);
   if (!inv[codigo]) {
-    if (delta < 0) return alert("Ese producto no está en el inventario");
-    inv[codigo] = { nombre: await nombreProducto(codigo), cantidad: 0 };
+    if (delta < 0) { estado("Ese producto no está en el inventario: " + codigo); return; }
+    estado("Buscando nombre del producto...");
+    inv[codigo] = { nombre: await buscarNombre(codigo), cantidad: 0 };
   }
-  inv[codigo].cantidad += delta;
-  if (inv[codigo].cantidad <= 0) {
-    inv[codigo].cantidad = 0;
-    avisar(`Se acabó: ${inv[codigo].nombre}`);
-  }
-  guardar();
+  cambiar(codigo, delta);
 }
 
 let ultimo = "", t = 0;
-new Html5QrcodeScanner("lector", { fps: 10, qrbox: 250 })
-  .render(codigo => {
-    // evita leer el mismo código varias veces seguidas
+const scanner = new Html5QrcodeScanner("lector", {
+  fps: 10,
+  qrbox: { width: 300, height: 150 },
+  formatsToSupport: [
+    Html5QrcodeSupportedFormats.EAN_13,
+    Html5QrcodeSupportedFormats.EAN_8,
+    Html5QrcodeSupportedFormats.UPC_A,
+    Html5QrcodeSupportedFormats.UPC_E,
+    Html5QrcodeSupportedFormats.CODE_128,
+    Html5QrcodeSupportedFormats.QR_CODE
+  ],
+  experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+}, false);
+
+scanner.render(
+  codigo => {
     if (codigo === ultimo && Date.now() - t < 3000) return;
     ultimo = codigo; t = Date.now();
     alEscanear(codigo);
-  });
+  },
+  () => {}
+);
 
 guardar();
 </script>
