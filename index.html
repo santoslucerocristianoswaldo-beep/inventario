@@ -71,7 +71,7 @@ function avisar(texto) {
   estado(texto);
   alert(texto);
   // Mensaje push gratis con la app ntfy (cambia el nombre del tema por uno tuyo)
-  fetch("https://ntfy.sh/mi-casa-inventario-cris123", { method: "POST", body: texto }).catch(() => {});
+  fetch("https://ntfy.sh/inventariocasa123", { method: "POST", body: texto }).catch(() => {});
 }
 
 function cambiar(c, d) {
